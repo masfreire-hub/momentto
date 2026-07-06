@@ -296,6 +296,7 @@ tr:last-child td{border-bottom:none;}
       <div class="sb-item" onclick="go('diversos')"><span class="si">🌐</span>Diversos<span class="badge" id="badgeDiversos" style="display:none">0</span></div>
       <div class="sb-section">Sistema</div>
       <div class="sb-item" onclick="go('config')"><span class="si">⚙️</span>Configurações</div>
+      <div class="sb-item" onclick="migrarDadosLocais()" style="color:var(--coral);"><span class="si">⬆️</span>Migrar dados locais → Nuvem</div>
     </div>
     <div class="sb-user">
       <div class="sb-user-card">
@@ -597,6 +598,48 @@ function hideConnErrBanner(){
 }
 
 window.__sbDiag = {};
+async function migrarDadosLocais(){
+  if(!confirm('Isso vai enviar para a nuvem todos os dados salvos apenas neste navegador (clientes, pedidos, compras, etc). Pode levar alguns segundos. Continuar?')) return;
+
+  const tabelas=['mt_clientes','mt_produtos','mt_pedidos','mt_agenda','mt_financeiro','mt_orcamentos','mt_insumos','mt_compras'];
+  // Nomes "curtos" usados por uma versão antiga do fallback (chave sem o prefixo da tabela)
+  const nomesCurtos={mt_clientes:'clientes',mt_produtos:'produtos',mt_pedidos:'pedidos',mt_agenda:'agenda',mt_financeiro:'financeiro',mt_orcamentos:'orcamentos',mt_insumos:'insumos',mt_compras:'compras'};
+
+  if(!window.__sbLibOk || typeof supabase==='undefined'){
+    alert('Sem conexão com o Supabase agora — recarregue a página e tente de novo.');
+    return;
+  }
+
+  let totalEnviados=0, totalTabelas=0, erros=[];
+  for(const tabela of tabelas){
+    // Junta registros de qualquer um dos dois locais onde podem ter ficado presos
+    let locaisA=[]; try{locaisA=JSON.parse(localStorage.getItem('mt_'+tabela)||'[]');}catch(e){}
+    let locaisB=[]; try{locaisB=JSON.parse(localStorage.getItem('mt_'+nomesCurtos[tabela])||'[]');}catch(e){}
+    const todos={};
+    [...locaisA,...locaisB].forEach(r=>{if(r&&r.id) todos[r.id]=r;});
+    const registros=Object.values(todos);
+    if(!registros.length) continue;
+    totalTabelas++;
+    for(const row of registros){
+      try{
+        const {error}=await getSb().from(tabela).upsert(row,{onConflict:'id'});
+        if(error) throw error;
+        totalEnviados++;
+      }catch(e){ erros.push(tabela+': '+e.message); }
+    }
+  }
+
+  if(erros.length){
+    alert('Migração parcial. '+totalEnviados+' registro(s) enviado(s).\n\nErros:\n'+erros.slice(0,10).join('\n'));
+  } else if(totalEnviados===0){
+    alert('Não encontrei nenhum dado salvo localmente neste navegador para migrar.');
+  } else {
+    alert('✅ Migração concluída! '+totalEnviados+' registro(s) enviado(s) para a nuvem, de '+totalTabelas+' tabela(s). Recarregando os dados...');
+  }
+  await carregarDados();
+  go(curPage);
+}
+
 async function sbGet(table){
   // Espera a lib do Supabase carregar (até 6s), tentando CDN principal e reserva
   try{ await Promise.race([window.__sbLibReady, new Promise((_,r)=>setTimeout(()=>r(new Error('timeout ao carregar lib')),6000))]); }catch(e){}
