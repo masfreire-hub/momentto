@@ -596,10 +596,12 @@ function hideConnErrBanner(){
   if(b) b.remove();
 }
 
+window.__sbDiag = {};
 async function sbGet(table){
   // Espera a lib do Supabase carregar (até 6s), tentando CDN principal e reserva
   try{ await Promise.race([window.__sbLibReady, new Promise((_,r)=>setTimeout(()=>r(new Error('timeout ao carregar lib')),6000))]); }catch(e){}
   if(!window.__sbLibOk || typeof supabase==='undefined'){
+    window.__sbDiag[table]={status:'lib_falhou',count:0};
     showConnErrBanner('biblioteca do Supabase não carregou (bloqueio de rede/extensão?)');
     return LS(table);
   }
@@ -609,9 +611,11 @@ async function sbGet(table){
       const {data,error} = await getSb().from(table).select('*').order('created_at',{ascending:true});
       if(error) throw error;
       hideConnErrBanner();
+      window.__sbDiag[table]={status:'ok',count:(data||[]).length};
       return data||[];
     }catch(e){ lastErr=e; console.warn('SB get error (tentativa '+(tent+1)+'):',e); }
   }
+  window.__sbDiag[table]={status:'erro',count:0,erro:(lastErr&&lastErr.message)||'desconhecido'};
   showConnErrBanner((lastErr&&lastErr.message)||'erro desconhecido');
   return LS(table);
 }
@@ -740,16 +744,25 @@ async function carregarDados(){
     sbGet('mt_clientes'),sbGet('mt_produtos'),sbGet('mt_pedidos'),
     sbGet('mt_agenda'),sbGet('mt_financeiro'),sbGet('mt_orcamentos'),sbGet('mt_insumos'),sbGet('mt_compras')
   ]);
-  // Fallback to localStorage if empty
-  if(!clientes.length) clientes=LS('clientes');
-  if(!produtos.length) produtos=LS('produtos');
-  if(!pedidos.length) pedidos=LS('pedidos');
-  if(!agenda.length) agenda=LS('agenda');
-  if(!financeiro.length) financeiro=LS('financeiro');
-  if(!orcamentos.length) orcamentos=LS('orcamentos');
-  if(!insumos.length) insumos=LS('insumos');
-  if(!compras.length) compras=LS('compras');
+  mostrarDiagnostico();
   atualizarBadge();
+}
+function mostrarDiagnostico(){
+  const d=window.__sbDiag||{};
+  const linhas=Object.keys(d).map(t=>{
+    const info=d[t];
+    const icone=info.status==='ok'?'✅':'❌';
+    const detalhe=info.status==='ok'?(info.count+' registros'):(info.status==='lib_falhou'?'biblioteca não carregou':'erro: '+(info.erro||'?'));
+    return icone+' '+t+': '+detalhe;
+  }).join('<br>');
+  let p=document.getElementById('diagPanel');
+  if(!p){
+    p=document.createElement('div');
+    p.id='diagPanel';
+    p.style.cssText='position:fixed;bottom:10px;right:10px;background:#1A1A2E;color:#fff;padding:14px 18px;font-family:monospace;font-size:11px;z-index:99999;border-radius:8px;max-width:340px;box-shadow:0 4px 20px rgba(0,0,0,.3);line-height:1.6;';
+    document.body.appendChild(p);
+  }
+  p.innerHTML='<b>🔍 Diagnóstico de conexão</b><br>'+linhas+'<br><button onclick="this.parentElement.remove()" style="margin-top:8px;background:#E85D75;color:#fff;border:none;padding:4px 10px;border-radius:4px;cursor:pointer;">Fechar</button>';
 }
 function salvarLS(){LS('clientes',clientes);LS('produtos',produtos);LS('pedidos',pedidos);LS('agenda',agenda);LS('financeiro',financeiro);}
 function atualizarBadge(){
