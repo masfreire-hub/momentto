@@ -284,6 +284,7 @@ tr:last-child td{border-bottom:none;}
       <div class="sb-item" onclick="go('insumos')"><span class="si">🧺</span>Insumos</div>
       <div class="sb-section">Gestão</div>
       <div class="sb-item" onclick="go('financeiro')"><span class="si">💰</span>Financeiro</div>
+      <div class="sb-item" onclick="go('compras')"><span class="si">🛒</span>Compras<span class="badge" id="badgeCompras" style="display:none">0</span></div>
       <div class="sb-item" onclick="go('agenda')"><span class="si">📅</span>Agenda</div>
       <div class="sb-item" onclick="go('relatorios')"><span class="si">📊</span>Relatórios</div>
       <div class="sb-section">Vendas</div>
@@ -551,7 +552,7 @@ tr:last-child td{border-bottom:none;}
 let curUser=null, curPage='dash';
 let clientes=[], produtos=[], pedidos=[], agenda=[], financeiro=[], producao=[];
 let pedItensTemp=[], orcItensTemp=[];
-let insumos=[], orcamentos=[];
+let insumos=[], orcamentos=[], compras=[];
 
 // ══════════════════════════════════════════════════════════
 // SUPABASE
@@ -592,6 +593,18 @@ async function sbDelete(table, id){
   LS(table, LS(table).filter(r=>r.id!==id));
 }
 let editId=null;
+
+async function uploadNotaFiscal(file, itemId){
+  if(!file) return null;
+  try{
+    const ext=file.name.split('.').pop();
+    const path=`${itemId}_${Date.now()}.${ext}`;
+    const {error} = await getSb().storage.from('notas-fiscais').upload(path, file, {upsert:true});
+    if(error) throw error;
+    const {data} = getSb().storage.from('notas-fiscais').getPublicUrl(path);
+    return data?.publicUrl||null;
+  }catch(e){console.warn('Erro ao enviar nota fiscal:',e);toast('⚠️ Falha ao enviar a nota fiscal, item foi salvo mesmo assim');return null;}
+}
 
 // ══════════════════════════════════════════════════════════
 // UTILS
@@ -672,9 +685,9 @@ function checkSess(){
 // DADOS
 // ══════════════════════════════════════════════════════════
 async function carregarDados(){
-  [clientes,produtos,pedidos,agenda,financeiro,orcamentos,insumos] = await Promise.all([
+  [clientes,produtos,pedidos,agenda,financeiro,orcamentos,insumos,compras] = await Promise.all([
     sbGet('mt_clientes'),sbGet('mt_produtos'),sbGet('mt_pedidos'),
-    sbGet('mt_agenda'),sbGet('mt_financeiro'),sbGet('mt_orcamentos'),sbGet('mt_insumos')
+    sbGet('mt_agenda'),sbGet('mt_financeiro'),sbGet('mt_orcamentos'),sbGet('mt_insumos'),sbGet('mt_compras')
   ]);
   // Fallback to localStorage if empty
   if(!clientes.length) clientes=LS('clientes');
@@ -684,12 +697,15 @@ async function carregarDados(){
   if(!financeiro.length) financeiro=LS('financeiro');
   if(!orcamentos.length) orcamentos=LS('orcamentos');
   if(!insumos.length) insumos=LS('insumos');
+  if(!compras.length) compras=LS('compras');
   atualizarBadge();
 }
 function salvarLS(){LS('clientes',clientes);LS('produtos',produtos);LS('pedidos',pedidos);LS('agenda',agenda);LS('financeiro',financeiro);}
 function atualizarBadge(){
   const n=pedidos.filter(p=>['Aguardando','Em produção'].includes(p.status)).length;
   const b=el('badgePedidos');if(b){b.textContent=n;b.style.display=n>0?'':'none';}
+  const nc=compras.filter(c=>c.status==='pendente').length;
+  const bc=el('badgeCompras');if(bc){bc.textContent=nc;bc.style.display=nc>0?'':'none';}
   atualizarBadgeCanal();
 }
 
@@ -704,6 +720,7 @@ const PAGES={
   producao:{title:'Produção',btn:''},
   insumos:{title:'Insumos',btn:'+ Entrada de Insumo'},
   financeiro:{title:'Financeiro',btn:'+ Registrar'},
+  compras:{title:'Compras',btn:'+ Novo Item'},
   agenda:{title:'Agenda',btn:'+ Novo Evento'},
   relatorios:{title:'Relatórios',btn:''},
   config:{title:'Configurações',btn:''},
@@ -713,7 +730,7 @@ const PAGES={
   ml:{title:'Mercado Livre',btn:'+ Novo Pedido ML'},
   diversos:{title:'Diversos',btn:'+ Novo Pedido'},
 };
-const BTN_FNS={orcamentos:'abrirNovoOrcamento()',insumos:'abrirEntradaInsumo()',clientes:'abrirNovoCliente()',produtos:'abrirNovoProduto()',pedidos:'abrirNovoPedido()',financeiro:'abrirNovaTransacao()',agenda:'abrirNovoEvento()',orcamentos:'abrirNovoOrcamento()',shopee:'abrirNovoPedidoCanal("Shopee")',ml:'abrirNovoPedidoCanal("Mercado Livre")',diversos:'abrirNovoPedidoCanal("Diversos")'};
+const BTN_FNS={orcamentos:'abrirNovoOrcamento()',insumos:'abrirEntradaInsumo()',clientes:'abrirNovoCliente()',produtos:'abrirNovoProduto()',pedidos:'abrirNovoPedido()',financeiro:'abrirNovaTransacao()',compras:'abrirNovoItemCompra()',agenda:'abrirNovoEvento()',orcamentos:'abrirNovoOrcamento()',shopee:'abrirNovoPedidoCanal("Shopee")',ml:'abrirNovoPedidoCanal("Mercado Livre")',diversos:'abrirNovoPedidoCanal("Diversos")'};
 
 function go(page){
   curPage=page;
@@ -723,7 +740,7 @@ function go(page){
   const btn=el('topBtn');
   if(PAGES[page]?.btn){btn.textContent=PAGES[page].btn;btn.setAttribute('onclick',BTN_FNS[page]||'');btn.style.display='';}
   else btn.style.display='none';
-  const renders={dash:renderDash,orcamentos:renderOrcamentos,clientes:renderClientes,produtos:renderProdutos,pedidos:renderPedidos,producao:renderProducao,insumos:renderInsumos,financeiro:renderFinanceiro,agenda:renderAgenda,relatorios:renderRelatorios,config:renderConfig,shopee:()=>renderCanal('Shopee'),ml:()=>renderCanal('Mercado Livre'),diversos:()=>renderCanal('Diversos')};
+  const renders={dash:renderDash,orcamentos:renderOrcamentos,clientes:renderClientes,produtos:renderProdutos,pedidos:renderPedidos,producao:renderProducao,insumos:renderInsumos,financeiro:renderFinanceiro,compras:renderCompras,agenda:renderAgenda,relatorios:renderRelatorios,config:renderConfig,shopee:()=>renderCanal('Shopee'),ml:()=>renderCanal('Mercado Livre'),diversos:()=>renderCanal('Diversos')};
   renders[page]?.();
 }
 
@@ -1356,6 +1373,196 @@ function salvarSaidaInsumo(){
   el('mSaidaInsumo')?.remove();
   renderInsumos();
   toast(`✅ Saída de ${qtd} ${insumos[i].unidade||'un'} registrada!`);
+}
+
+// ══════════════════════════════════════════════════════════
+// COMPRAS (o que precisa comprar para a empresa)
+// ══════════════════════════════════════════════════════════
+function renderCompras(){
+  const pendentes = compras.filter(c=>c.status==='pendente');
+  const compradas = compras.filter(c=>c.status==='comprado');
+  const mesAtual=new Date().toISOString().slice(0,7);
+  const gastoMes = compradas.filter(c=>c.dataCompra?.startsWith(mesAtual)).reduce((s,c)=>s+(parseFloat(c.valorPago)||0),0);
+  const valorPendenteEst = pendentes.reduce((s,c)=>s+(parseFloat(c.valorEstimado)||0),0);
+
+  el('content').innerHTML=`
+    <div class="kpi-grid" style="margin-bottom:20px;">
+      <div class="kpi ${pendentes.length>0?'coral':'green'}"><div class="kpi-ico">🛒</div><div class="kpi-label">Falta Comprar</div><div class="kpi-value">${pendentes.length}</div><div class="kpi-sub">${fmtMoney(valorPendenteEst)} estimado</div></div>
+      <div class="kpi teal"><div class="kpi-ico">✅</div><div class="kpi-label">Comprados</div><div class="kpi-value">${compradas.length}</div></div>
+      <div class="kpi gold"><div class="kpi-ico">💳</div><div class="kpi-label">Gasto no Mês</div><div class="kpi-value">${fmtMoney(gastoMes)}</div></div>
+    </div>
+
+    ${pendentes.length>0?`<div class="card" style="margin-bottom:16px;border-left:3px solid var(--coral);">
+      <div class="card-title" style="color:var(--coral);">🛒 O que falta comprar</div>
+      ${pendentes.map(c=>`
+        <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border);">
+          <div>
+            <div style="font-size:12px;font-weight:600;">${c.item}</div>
+            <div style="font-size:11px;color:var(--tx3);">${c.categoria||'—'} ${c.quantidade?'· Qtd: '+c.quantidade:''} ${c.fornecedor?'· '+c.fornecedor:''}</div>
+          </div>
+          <div style="display:flex;align-items:center;gap:8px;">
+            <span style="font-size:11px;font-weight:700;color:var(--coral);">${c.valorEstimado?fmtMoney(c.valorEstimado):'—'}</span>
+            <button class="btn btn-p btn-xs" onclick="abrirMarcarComprado('${c.id}')">✅ Marcar Comprado</button>
+          </div>
+        </div>`).join('')}
+    </div>`:''}
+
+    <div class="card" style="padding:0;">
+      <div style="padding:14px 20px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;">
+        <span style="font-size:13px;font-weight:700;">Todas as Compras</span>
+        <button class="btn btn-p btn-sm" onclick="abrirNovoItemCompra()">+ Novo Item</button>
+      </div>
+      <div class="tbl-wrap"><table>
+        <thead><tr><th>Item</th><th>Categoria</th><th>Qtd</th><th>Valor Est.</th><th>Status</th><th>Data Compra</th><th>Valor Pago</th><th>Nota Fiscal</th><th></th></tr></thead>
+        <tbody>
+          ${[...compras].sort((a,b)=>(a.status==='pendente'?0:1)-(b.status==='pendente'?0:1)||new Date(b.criadoEm||0)-new Date(a.criadoEm||0)).map(c=>`
+            <tr>
+              <td style="font-weight:600;">${c.item}</td>
+              <td style="font-size:11px;color:var(--tx3);">${c.categoria||'—'}</td>
+              <td style="font-size:11px;">${c.quantidade||'—'}</td>
+              <td style="font-size:11px;">${c.valorEstimado?fmtMoney(c.valorEstimado):'—'}</td>
+              <td><span class="bdg ${c.status==='comprado'?'bdg-green':'bdg-gold'}">${c.status==='comprado'?'Comprado':'Pendente'}</span></td>
+              <td style="font-size:11px;">${c.dataCompra?fmtDate(c.dataCompra):'—'}</td>
+              <td style="font-size:11px;font-weight:700;">${c.valorPago?fmtMoney(c.valorPago):'—'}</td>
+              <td style="font-size:11px;">${c.notaFiscalUrl?`<a href="${c.notaFiscalUrl}" target="_blank" style="color:var(--teal);font-weight:600;text-decoration:none;">📎 Ver</a>`:'—'}</td>
+              <td style="display:flex;gap:4px;">
+                ${c.status==='pendente'
+                  ?`<button class="btn btn-t btn-xs" onclick="abrirNovoItemCompra('${c.id}')">✏️</button><button class="btn btn-p btn-xs" onclick="abrirMarcarComprado('${c.id}')">✅ Comprar</button>`
+                  :`<button class="btn btn-xs" style="background:var(--surf2);color:var(--tx3);" onclick="reabrirPendente('${c.id}')">↩️ Reabrir</button>`}
+                <button class="btn btn-xs" style="background:var(--coral-light);color:var(--coral);border:1px solid var(--coral-mid);" onclick="excluirItemCompra('${c.id}')">🗑️</button>
+              </td>
+            </tr>`).join('')}
+          ${compras.length===0?`<tr><td colspan="9"><div class="empty"><div class="empty-ico">🛒</div><div class="empty-title">Nenhum item cadastrado</div><div class="empty-sub">Adicione o que a empresa precisa comprar</div></div></td></tr>`:''}
+        </tbody>
+      </table></div>
+    </div>`;
+}
+
+function abrirNovoItemCompra(id){
+  const c = id ? compras.find(x=>x.id===id) : null;
+  const modal = `<div class="ov open" id="mCompra" onclick="if(event.target.id==='mCompra'){closeM('mCompra');el('mCompra')?.remove();}">
+    <div class="modal modal-sm">
+      <div class="mh"><div class="mh-t">${c?'Editar Item':'Novo Item para Comprar'}</div><button class="xb" onclick="closeM('mCompra');el('mCompra')?.remove()">✕</button></div>
+      <div class="mb">
+        <input type="hidden" id="compId" value="${id||''}">
+        <div class="fg"><label class="fl">Item / Descrição *</label><input type="text" id="compItem" placeholder="Ex: Tecido para almofadas" value="${c?.item||''}"></div>
+        <div class="fr2">
+          <div class="fg"><label class="fl">Categoria</label><select id="compCat">
+            ${['Matéria-prima','Embalagem','Equipamento','Material de Escritório','Manutenção','Outros'].map(o=>`<option ${c?.categoria===o?'selected':''}>${o}</option>`).join('')}
+          </select></div>
+          <div class="fg"><label class="fl">Quantidade</label><input type="number" id="compQtd" min="1" value="${c?.quantidade||1}"></div>
+        </div>
+        <div class="fr2">
+          <div class="fg"><label class="fl">Valor Estimado (R$)</label><input type="number" id="compValorEst" placeholder="0,00" step="0.01" value="${c?.valorEstimado||''}"></div>
+          <div class="fg"><label class="fl">Fornecedor</label><input type="text" id="compFornecedor" placeholder="Nome do fornecedor" value="${c?.fornecedor||''}"></div>
+        </div>
+        <div class="fg"><label class="fl">Observações</label><textarea id="compObs" placeholder="Detalhes, link do produto, etc.">${c?.observacoes||''}</textarea></div>
+      </div>
+      <div class="mft" style="padding:12px 20px;border-top:1px solid var(--border);display:flex;gap:8px;justify-content:flex-end;">
+        <button class="btn btn-o" onclick="closeM('mCompra');el('mCompra')?.remove()">Cancelar</button>
+        <button class="btn btn-p" onclick="salvarItemCompra()">💾 Salvar</button>
+      </div>
+    </div>
+  </div>`;
+  document.body.insertAdjacentHTML('beforeend', modal);
+  setTimeout(()=>document.querySelector('#mCompra input:not([type=hidden])')?.focus(),50);
+}
+
+async function salvarItemCompra(){
+  const item = el('compItem')?.value.trim();
+  if(!item){toast('⚠️ Informe o item');return;}
+  const id = el('compId')?.value;
+  const dados = {
+    item,
+    categoria: el('compCat')?.value||'Outros',
+    quantidade: el('compQtd')?.value||1,
+    valorEstimado: el('compValorEst')?.value||null,
+    fornecedor: el('compFornecedor')?.value||'',
+    observacoes: el('compObs')?.value||''
+  };
+  if(id){
+    const i = compras.findIndex(x=>x.id===id);
+    if(i>-1) compras[i] = {...compras[i], ...dados};
+  } else {
+    compras.push({id:uid(), ...dados, status:'pendente', criadoEm:new Date().toISOString()});
+  }
+  const registro = compras.find(x=>x.id===(id||compras[compras.length-1].id));
+  LS('compras',compras); await sbUpsert('mt_compras', registro);
+  closeM('mCompra');el('mCompra')?.remove();
+  renderCompras(); atualizarBadge();
+  toast('✅ Item salvo!');
+}
+
+function abrirMarcarComprado(id){
+  const c = compras.find(x=>x.id===id);
+  if(!c){toast('⚠️ Item não encontrado');return;}
+  const modal = `<div class="ov open" id="mCompraFinal" onclick="if(event.target.id==='mCompraFinal'){closeM('mCompraFinal');el('mCompraFinal')?.remove();}">
+    <div class="modal modal-sm">
+      <div class="mh"><div class="mh-t">✅ Marcar como Comprado: ${c.item}</div><button class="xb" onclick="closeM('mCompraFinal');el('mCompraFinal')?.remove()">✕</button></div>
+      <div class="mb">
+        <input type="hidden" id="compFinalId" value="${id}">
+        <div class="fr2">
+          <div class="fg"><label class="fl">Data da Compra *</label><input type="date" id="compDataCompra" value="${hoje()}"></div>
+          <div class="fg"><label class="fl">Valor Pago (R$) *</label><input type="number" id="compValorPago" placeholder="0,00" step="0.01" value="${c.valorEstimado||''}"></div>
+        </div>
+        <div class="fg"><label class="fl">Nota Fiscal (foto ou PDF)</label><input type="file" id="compNotaFile" accept="image/*,.pdf"></div>
+        <div class="fg"><label class="fl">Observações da compra</label><input type="text" id="compObsFinal" placeholder="Opcional"></div>
+      </div>
+      <div class="mft" style="padding:12px 20px;border-top:1px solid var(--border);display:flex;gap:8px;justify-content:flex-end;">
+        <button class="btn btn-o" onclick="closeM('mCompraFinal');el('mCompraFinal')?.remove()">Cancelar</button>
+        <button class="btn btn-p" id="btnSalvarCompraFinal" onclick="salvarCompraFinalizada()">💾 Confirmar Compra</button>
+      </div>
+    </div>
+  </div>`;
+  document.body.insertAdjacentHTML('beforeend', modal);
+}
+
+async function salvarCompraFinalizada(){
+  const id = el('compFinalId')?.value;
+  const i = compras.findIndex(x=>x.id===id);
+  if(i<0){toast('⚠️ Item não encontrado');return;}
+  const dataCompra = el('compDataCompra')?.value;
+  const valorPago = el('compValorPago')?.value;
+  if(!dataCompra||!valorPago){toast('⚠️ Preencha a data e o valor pago');return;}
+
+  const btn=el('btnSalvarCompraFinal'); if(btn){btn.disabled=true;btn.textContent='Enviando...';}
+
+  const file = el('compNotaFile')?.files?.[0]||null;
+  let notaFiscalUrl = compras[i].notaFiscalUrl||null;
+  if(file){
+    const url = await uploadNotaFiscal(file, id);
+    if(url) notaFiscalUrl = url;
+  }
+
+  compras[i] = {
+    ...compras[i],
+    status:'comprado',
+    dataCompra,
+    valorPago,
+    notaFiscalUrl,
+    observacoesCompra: el('compObsFinal')?.value||''
+  };
+  LS('compras',compras); await sbUpsert('mt_compras', compras[i]);
+  el('mCompraFinal')?.remove();
+  renderCompras(); atualizarBadge();
+  toast('✅ Compra registrada!');
+}
+
+async function reabrirPendente(id){
+  const i = compras.findIndex(x=>x.id===id);
+  if(i<0)return;
+  compras[i].status='pendente';
+  LS('compras',compras); await sbUpsert('mt_compras', compras[i]);
+  renderCompras(); atualizarBadge();
+  toast('↩️ Item reaberto como pendente');
+}
+
+async function excluirItemCompra(id){
+  if(!confirm('Excluir este item da lista de compras?'))return;
+  compras = compras.filter(x=>x.id!==id);
+  LS('compras',compras); await sbDelete('mt_compras', id);
+  renderCompras(); atualizarBadge();
+  toast('🗑️ Item excluído');
 }
 
 // ══════════════════════════════════════════════════════════
