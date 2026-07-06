@@ -544,7 +544,23 @@ tr:last-child td{border-bottom:none;}
 </div>
 
 
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script>
+// Carrega a lib do Supabase com CDN de reserva, caso a principal seja bloqueada
+// (firewall corporativo, extensão de privacidade, etc.)
+window.__sbLibOk = false;
+function __loadScript(src){
+  return new Promise((res,rej)=>{
+    const s=document.createElement('script');
+    s.src=src; s.onload=()=>res(true); s.onerror=()=>rej(new Error('falhou: '+src));
+    document.head.appendChild(s);
+  });
+}
+window.__sbLibReady = __loadScript('https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2')
+  .then(()=>{window.__sbLibOk=true;})
+  .catch(()=> __loadScript('https://unpkg.com/@supabase/supabase-js@2/dist/umd/supabase.js')
+    .then(()=>{window.__sbLibOk=true;})
+    .catch(()=>{window.__sbLibOk=false;}));
+</script>
 <script>
 // ══════════════════════════════════════════════════════════
 // ESTADO
@@ -565,19 +581,54 @@ function getSb(){
   return _sb;
 }
 
+function showConnErrBanner(msg){
+  let b=document.getElementById('connErrBanner');
+  if(!b){
+    b=document.createElement('div');
+    b.id='connErrBanner';
+    b.style.cssText='position:fixed;top:0;left:0;right:0;background:#E85D75;color:#fff;padding:10px 16px;font-family:sans-serif;font-size:13px;z-index:99999;text-align:center;';
+    document.body.appendChild(b);
+  }
+  b.textContent='⚠️ Não foi possível conectar ao banco de dados (dados exibidos podem estar desatualizados/vazios). Detalhe: '+msg+'. Recarregue a página ou avise o suporte.';
+}
+function hideConnErrBanner(){
+  const b=document.getElementById('connErrBanner');
+  if(b) b.remove();
+}
+
 async function sbGet(table){
-  try{
-    const {data,error} = await getSb().from(table).select('*').order('created_at',{ascending:true});
-    if(error) throw error;
-    return data||[];
-  }catch(e){console.warn('SB get error:',e);return LS(table);}
+  // Espera a lib do Supabase carregar (até 6s), tentando CDN principal e reserva
+  try{ await Promise.race([window.__sbLibReady, new Promise((_,r)=>setTimeout(()=>r(new Error('timeout ao carregar lib')),6000))]); }catch(e){}
+  if(!window.__sbLibOk || typeof supabase==='undefined'){
+    showConnErrBanner('biblioteca do Supabase não carregou (bloqueio de rede/extensão?)');
+    return LS(table);
+  }
+  let lastErr=null;
+  for(let tent=0; tent<2; tent++){
+    try{
+      const {data,error} = await getSb().from(table).select('*').order('created_at',{ascending:true});
+      if(error) throw error;
+      hideConnErrBanner();
+      return data||[];
+    }catch(e){ lastErr=e; console.warn('SB get error (tentativa '+(tent+1)+'):',e); }
+  }
+  showConnErrBanner((lastErr&&lastErr.message)||'erro desconhecido');
+  return LS(table);
 }
 
 async function sbUpsert(table, row){
-  try{
-    const {error} = await getSb().from(table).upsert(row,{onConflict:'id'});
-    if(error) throw error;
-  }catch(e){console.warn('SB upsert error:',e);}
+  if(!window.__sbLibOk || typeof supabase==='undefined'){
+    showConnErrBanner('sem conexão com o banco — este registro foi salvo só neste navegador e não será visto por outras pessoas até a conexão voltar');
+  } else {
+    try{
+      const {error} = await getSb().from(table).upsert(row,{onConflict:'id'});
+      if(error) throw error;
+      hideConnErrBanner();
+    }catch(e){
+      console.warn('SB upsert error:',e);
+      showConnErrBanner('falha ao salvar no banco ('+e.message+') — este registro ficou só neste navegador');
+    }
+  }
   // Always save locally too
   const local=LS(table);
   const idx=local.findIndex(r=>r.id===row.id);
@@ -589,7 +640,7 @@ async function sbDelete(table, id){
   try{
     const {error} = await getSb().from(table).delete().eq('id',id);
     if(error) throw error;
-  }catch(e){console.warn('SB delete error:',e);}
+  }catch(e){console.warn('SB delete error:',e);showConnErrBanner('falha ao excluir no banco ('+e.message+')');}
   LS(table, LS(table).filter(r=>r.id!==id));
 }
 let editId=null;
