@@ -621,11 +621,22 @@ async function migrarDadosLocais(){
     if(!registros.length) continue;
     totalTabelas++;
     for(const row of registros){
-      try{
-        const {error}=await getSb().from(tabela).upsert(row,{onConflict:'id'});
-        if(error) throw error;
-        totalEnviados++;
-      }catch(e){ erros.push(tabela+': '+e.message); }
+      let payload={...row};
+      let tentativas=0, sucesso=false, ultimoErro=null;
+      while(tentativas<6){
+        tentativas++;
+        try{
+          const {error}=await getSb().from(tabela).upsert(payload,{onConflict:'id'});
+          if(error) throw error;
+          sucesso=true; break;
+        }catch(e){
+          const colunaRuim=extrairColunaInexistente(e.message);
+          if(colunaRuim && colunaRuim in payload){ delete payload[colunaRuim]; continue; }
+          ultimoErro=e; break;
+        }
+      }
+      if(sucesso) totalEnviados++;
+      else erros.push(tabela+' (id '+row.id+'): '+(ultimoErro?.message||'falha desconhecida'));
     }
   }
 
@@ -663,20 +674,40 @@ async function sbGet(table){
   return LS(table);
 }
 
+// Se o Supabase reclamar de uma coluna que não existe na tabela, extrai o nome dela do erro
+function extrairColunaInexistente(msg){
+  if(!msg) return null;
+  const m = msg.match(/Could not find the '([^']+)' column/i);
+  return m ? m[1] : null;
+}
+
 async function sbUpsert(table, row){
   if(!window.__sbLibOk || typeof supabase==='undefined'){
     showConnErrBanner('sem conexão com o banco — este registro foi salvo só neste navegador e não será visto por outras pessoas até a conexão voltar');
   } else {
-    try{
-      const {error} = await getSb().from(table).upsert(row,{onConflict:'id'});
-      if(error) throw error;
-      hideConnErrBanner();
-    }catch(e){
-      console.warn('SB upsert error:',e);
-      showConnErrBanner('falha ao salvar no banco ('+e.message+') — este registro ficou só neste navegador');
+    let payload={...row};
+    let tentativas=0;
+    while(tentativas<6){
+      tentativas++;
+      try{
+        const {error} = await getSb().from(table).upsert(payload,{onConflict:'id'});
+        if(error) throw error;
+        hideConnErrBanner();
+        break;
+      }catch(e){
+        const colunaRuim=extrairColunaInexistente(e.message);
+        if(colunaRuim && colunaRuim in payload){
+          console.warn('Coluna "'+colunaRuim+'" não existe em '+table+' — removendo do envio e tentando de novo.');
+          delete payload[colunaRuim];
+          continue;
+        }
+        console.warn('SB upsert error:',e);
+        showConnErrBanner('falha ao salvar no banco ('+e.message+') — este registro ficou só neste navegador');
+        break;
+      }
     }
   }
-  // Always save locally too
+  // Always save locally too (com todos os campos originais, sem cortar nada)
   const local=LS(table);
   const idx=local.findIndex(r=>r.id===row.id);
   if(idx>-1)local[idx]=row;else local.push(row);
